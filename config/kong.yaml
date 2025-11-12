@@ -1,0 +1,118 @@
+_format_version: "2.1"
+
+_transform: true
+
+# Global Plugins (applied to ALL routes)
+plugins:
+  - name: rate-limiting
+    config:
+      minute: 1000
+      hour: 10000
+      policy: local
+      fault_tolerant: true
+      hide_client_headers: false
+  - name: correlation-id
+    config:
+      header_name: X-Correlation-ID
+      generator: uuid
+      echo_downstream: true
+
+# Services
+services:
+  - name: auth-ms
+    url: http://platform-auth-ms:3300
+    connect_timeout: 60000
+    write_timeout: 60000
+    read_timeout: 60000
+    retries: 5
+    routes:
+      - name: public-auth-routes
+        paths:
+          - /public
+        strip_path: true
+        preserve_host: false
+      - name: private-auth-routes
+        paths:
+          - /private
+        strip_path: true
+        preserve_host: false
+        plugins:
+          - name: jwt
+            config:
+              secret_is_base64: false
+              claims_to_verify:
+                - exp
+              anonymous: null
+              run_on_preflight: true
+              maximum_expiration: 0
+          - name: jti-blacklist-checker
+            config:
+              redis_host: redis
+              redis_port: 6379
+              redis_password: null
+              redis_db: 0
+              redis_timeout: 2000
+              redis_key_prefix: "access:key"
+              db_fallback: true
+              postgres_host: postgres
+              postgres_port: 5432
+              postgres_database: seamtel
+              postgres_user: seamfix
+              postgres_password: k0l0
+              postgres_table: revoked_access_token
+              fail_closed: true
+              shadow_mode: false
+
+  - name: user-ms
+    url: http://platform-user-ms:3400
+    connect_timeout: 60000
+    write_timeout: 60000
+    read_timeout: 60000
+    retries: 5
+    routes:
+      - name: public-user-routes
+        paths:
+          - /public/user
+        strip_path: true
+        preserve_host: false
+      - name: private-user-routes
+        paths:
+          - /private/user
+        strip_path: true
+        preserve_host: false
+        plugins:
+          - name: jwt
+            config:
+              secret_is_base64: false
+              claims_to_verify:
+                - exp
+              anonymous: null
+              run_on_preflight: true
+              maximum_expiration: 0
+          - name: jti-blacklist-checker
+            config:
+              redis_host: redis
+              redis_port: 6379
+              redis_password: null
+              redis_db: 0
+              redis_timeout: 2000
+              redis_key_prefix: "access:key"
+              db_fallback: true
+              postgres_host: postgres
+              postgres_port: 5432
+              postgres_database: seamtel
+              postgres_user: seamfix
+              postgres_password: k0l0
+              postgres_table: revoked_access_token
+              fail_closed: true
+              shadow_mode: false
+
+# Single Consumer for JWT
+consumers:
+  - username: platform-client
+    custom_id: platform-app
+    jwt_secrets:
+      - key: your-jwt-signing-key-here
+        secret: your-jwt-signing-key-here
+        algorithm: HS256
+

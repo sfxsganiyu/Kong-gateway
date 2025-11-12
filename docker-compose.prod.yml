@@ -1,0 +1,70 @@
+version: "3.9"
+
+networks:
+  platform-network:
+    external: true
+
+volumes:
+  kong_prefix_vol:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+  kong_tmp_vol:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+
+services:
+  kong-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kong-gateway-prod
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /usr/local/kong/declarative/kong.yaml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: "127.0.0.1:8001, 127.0.0.1:8444 ssl"
+      KONG_PROXY_LISTEN: "0.0.0.0:8000, 0.0.0.0:8443 ssl"
+      KONG_LOG_LEVEL: ${KONG_LOG_LEVEL:-warn}
+      KONG_PLUGINS: bundled,jti-blacklist-checker
+      KONG_NGINX_WORKER_PROCESSES: ${KONG_NGINX_WORKER_PROCESSES:-auto}
+      KONG_PREFIX: /var/run/kong
+      KONG_SSL_CERT: ${KONG_SSL_CERT:-/etc/kong/certs/cert.pem}
+      KONG_SSL_CERT_KEY: ${KONG_SSL_CERT_KEY:-/etc/kong/certs/key.pem}
+      KONG_REAL_IP_HEADER: X-Forwarded-For
+      KONG_REAL_IP_RECURSIVE: "on"
+      KONG_TRUSTED_IPS: "0.0.0.0/0,::/0"
+    networks:
+      - platform-network
+    ports:
+      - "8000:8000"
+      - "127.0.0.1:8001:8001"
+      - "8443:8443"
+      - "127.0.0.1:8444:8444"
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    read_only: true
+    volumes:
+      - ./config:/usr/local/kong/declarative:ro
+      - ./certs:/etc/kong/certs:ro
+      - kong_prefix_vol:/var/run/kong
+      - kong_tmp_vol:/tmp
+    security_opt:
+      - no-new-privileges
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
