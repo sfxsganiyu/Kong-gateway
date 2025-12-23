@@ -1,3 +1,4 @@
+-- handler.lua
 local redis_client = require "kong.plugins.jti-blacklist-checker.redis-client"
 local db_fallback = require "kong.plugins.jti-blacklist-checker.db-fallback"
 
@@ -11,107 +12,84 @@ local JtiBlacklistHandler = {
 
 function JtiBlacklistHandler:access(conf)
   if conf.shadow_mode then
-    kong.log.info("[JTI-BLACKLIST] Running in shadow mode (logging only)")
+    kong.log.info("[JTI-BLACKLIST] Shadow mode enabled (no blocking)")
   end
 
-  local jwt_credential = kong.ctx.shared.authenticated_credential
-  if not jwt_credential then
-    kong.log.err("[JTI-BLACKLIST] No JWT credential found. Ensure JWT plugin runs before this plugin.")
+  -- ✅ CORRECT SOURCE OF JWT DATA
+  local jwt = kong.ctx.shared.jwt_token
+  if not jwt or not jwt.claims then
+    kong.log.err("[JTI-BLACKLIST] JWT plugin did not run or token missing")
+
     if conf.fail_closed then
       return kong.response.exit(401, {
         message = "Unauthorized",
-        code = "NO_JWT_CREDENTIAL"
+        code = "NO_JWT"
       })
     end
     return
   end
 
-  local jti = jwt_credential.jti
+  local claims = jwt.claims
+  local jti = claims.jti
+
   if not jti then
-    kong.log.err("[JTI-BLACKLIST] No JTI claim found in JWT token")
-    if conf.fail_closed then
-      return kong.response.exit(401, {
-        message = "Invalid token: missing JTI",
-        code = "MISSING_JTI"
-      })
-    end
-    return
+    kong.log.err("[JTI-BLACKLIST] Missing jti claim")
+    return kong.response.exit(401, {
+      message = "Invalid token",
+      code = "MISSING_JTI"
+    })
   end
 
-  local exp = jwt_credential.exp
-  if exp and type(exp) == "number" then
-    local current_time = ngx.time()
-    if exp <= current_time then
-      kong.log.warn("[JTI-BLACKLIST] Token expired for JTI: " .. jti)
-      return kong.response.exit(401, {
-        message = "Token expired",
-        code = "TOKEN_EXPIRED"
-      })
-    end
+  -- Optional but safe expiry check
+  if claims.exp and claims.exp <= ngx.time() then
+    return kong.response.exit(401, {
+      message = "Token expired",
+      code = "TOKEN_EXPIRED"
+    })
   end
 
   local redis_key = conf.redis_key_prefix .. ":" .. jti
-  kong.log.debug("[JTI-BLACKLIST] Checking Redis key: " .. redis_key)
+  kong.log.debug("[JTI-BLACKLIST] Redis check → " .. redis_key)
 
-  local redis_result, redis_err = redis_client.check_token(conf, redis_key)
+  local exists, redis_err = redis_client.check_token(conf, redis_key)
 
+  -- ❗ Redis failure → FAIL CLOSED
   if redis_err then
-    kong.log.warn("[JTI-BLACKLIST] Redis check failed for JTI " .. jti .. ": " .. redis_err)
-    
+    kong.log.err("[JTI-BLACKLIST] Redis error: " .. redis_err)
+
     if conf.db_fallback then
-      kong.log.info("[JTI-BLACKLIST] Attempting database fallback for JTI: " .. jti)
-      local db_result, db_err = db_fallback.check_revoked_token(conf, jti)
-      
-      if db_err then
-        kong.log.err("[JTI-BLACKLIST] Database fallback failed: " .. db_err)
-        if conf.fail_closed then
-          return kong.response.exit(503, {
-            message = "Service temporarily unavailable",
-            code = "BLACKLIST_CHECK_FAILED"
-          })
-        end
-        return
-      end
+      local revoked, db_err = db_fallback.check_revoked_token(conf, jti)
 
-      if db_result then
-        kong.log.warn("[JTI-BLACKLIST] Token found in revocation table (DB): " .. jti)
-        if conf.shadow_mode then
-          kong.log.warn("[JTI-BLACKLIST] SHADOW MODE: Would have blocked revoked token (DB): " .. jti)
-          return
-        end
-        return kong.response.exit(401, {
-          message = "Access token has been revoked",
-          code = "ACCESS_TOKEN_REVOKED"
-        })
-      end
-
-      kong.log.debug("[JTI-BLACKLIST] Token not found in revocation table (DB), allowing access")
-      return
-    else
-      if conf.fail_closed then
-        return kong.response.exit(503, {
-          message = "Service temporarily unavailable",
-          code = "REDIS_UNAVAILABLE"
-        })
-      end
-      return
+      -- ❗ ANY uncertainty → BLOCK
+      return kong.response.exit(401, {
+        message = "Access token revoked",
+        code = "ACCESS_TOKEN_REVOKED"
+      })
     end
+
+    return kong.response.exit(503, {
+      message = "Token verification failed",
+      code = "REDIS_UNAVAILABLE"
+    })
   end
 
-  if not redis_result then
-    kong.log.warn("[JTI-BLACKLIST] Redis key NOT found (token revoked): " .. redis_key)
+  -- ❗ Redis key missing → TOKEN REVOKED
+  if not exists then
+    kong.log.warn("[JTI-BLACKLIST] Token revoked (Redis key missing): " .. jti)
+
     if conf.shadow_mode then
-      kong.log.warn("[JTI-BLACKLIST] SHADOW MODE: Would have blocked revoked token: " .. jti)
+      kong.log.warn("[JTI-BLACKLIST] SHADOW: would block revoked token")
       return
     end
+
     return kong.response.exit(401, {
-      message = "Access token has been revoked",
+      message = "Access token revoked",
       code = "ACCESS_TOKEN_REVOKED"
     })
   end
 
-  kong.log.debug("[JTI-BLACKLIST] Token is valid (Redis key exists): " .. jti)
+  -- ✅ Token explicitly allowed
+  kong.log.debug("[JTI-BLACKLIST] Token allowed: " .. jti)
 end
 
 return JtiBlacklistHandler
-
