@@ -126,7 +126,7 @@ local ngx  = ngx
 
 local JtiBlacklistHandler = {
   VERSION  = "1.1.0",
-  PRIORITY = 900,
+  PRIORITY = 700,
 }
 
 function JtiBlacklistHandler:access(conf)
