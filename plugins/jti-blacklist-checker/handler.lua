@@ -132,21 +132,29 @@ local JtiBlacklistHandler = {
 function JtiBlacklistHandler:access(conf)
   kong.log.err("========== JTI BLACKLIST DEBUG START ==========")
 
-  -- 🔎 Log Authorization header
   local auth_header = kong.request.get_header("authorization")
   kong.log.err("[DEBUG] Authorization header: ", auth_header or "nil")
 
-  -- 🔎 Log raw JWT context
-  local jwt = kong.ctx.shared.jwt_token
-  kong.log.err("[DEBUG] kong.ctx.shared.jwt_token: ", jwt and "PRESENT" or "NIL")
+  local jwt_credential = kong.ctx.shared.authenticated_credential
+  local jwt_token = kong.ctx.shared.jwt_token
 
-  if jwt then
-    kong.log.err("[DEBUG] jwt.header: ", jwt.header and kong.log.inspect(jwt.header) or "nil")
-    kong.log.err("[DEBUG] jwt.claims: ", jwt.claims and kong.log.inspect(jwt.claims) or "nil")
+  kong.log.err("[DEBUG] kong.ctx.shared.authenticated_credential: ", jwt_credential and "PRESENT" or "NIL")
+  kong.log.err("[DEBUG] kong.ctx.shared.jwt_token: ", jwt_token and "PRESENT" or "NIL")
+
+  local jti = nil
+  local claims = nil
+
+  if jwt_credential then
+    jti = jwt_credential.jti
+    claims = jwt_credential
+    kong.log.err("[DEBUG] Using authenticated_credential")
+  elseif jwt_token and jwt_token.claims then
+    claims = jwt_token.claims
+    jti = claims.jti
+    kong.log.err("[DEBUG] Using jwt_token.claims")
   end
 
-  -- 🔴 FORCE CLOSE: JWT MUST EXIST
-  if not jwt or not jwt.claims then
+  if not jwt_credential and not jwt_token then
     kong.log.err("[JTI-BLACKLIST] JWT missing or not authenticated by JWT plugin")
 
     return kong.response.exit(401, {
@@ -155,8 +163,14 @@ function JtiBlacklistHandler:access(conf)
     })
   end
 
-  local claims = jwt.claims
-  local jti    = claims.jti
+  if not claims then
+    kong.log.err("[JTI-BLACKLIST] JWT claims not found")
+
+    return kong.response.exit(401, {
+      message = "Unauthorized",
+      code    = "NO_JWT_CLAIMS"
+    })
+  end
 
   kong.log.err("[DEBUG] jti: ", jti or "nil")
   kong.log.err("[DEBUG] iss: ", claims.iss or "nil")
@@ -170,7 +184,6 @@ function JtiBlacklistHandler:access(conf)
     })
   end
 
-  -- 🔒 Exp check (defensive)
   if claims.exp and claims.exp <= ngx.time() then
     return kong.response.exit(401, {
       message = "Token expired",
