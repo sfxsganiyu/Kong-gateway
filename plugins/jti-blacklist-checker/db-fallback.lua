@@ -11,9 +11,8 @@ function _M.check_revoked_token(conf, jti)
   })
 
   local ok, err = pg:connect()
-  if not ok then return nil, err end
+  if not ok then return nil, "DB Connect error: " .. tostring(err) end
 
-  -- Logic: We check if the JTI exists in the "revoked" table
   local query = string.format(
     "SELECT 1 FROM %s WHERE jti = %s LIMIT 1",
     conf.postgres_table,
@@ -25,11 +24,12 @@ function _M.check_revoked_token(conf, jti)
 
   if err then return nil, err end
 
+  -- If record exists, the token is BANNED/REVOKED
   if res and #res > 0 then
-    return true, nil -- It IS in the revoked list
+    return true, nil
   end
 
-  return false, nil -- Not revoked
+  return false, nil
 end
 
 return _M
