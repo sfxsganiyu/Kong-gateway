@@ -27,7 +27,6 @@ function JtiBlacklistHandler:access(conf)
   local sources = {
     { name = "kong.ctx.shared.authenticated_jwt_token", data = kong.ctx.shared.authenticated_jwt_token },
     { name = "ngx.ctx.authenticated_jwt_token",          data = ngx.ctx.authenticated_jwt_token },
-    { name = "kong.ctx.shared.authenticated_credential", data = kong.ctx.shared.authenticated_credential }
   }
 
   local jti = nil
