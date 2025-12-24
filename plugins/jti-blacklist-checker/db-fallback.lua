@@ -1,49 +1,35 @@
 local pgmoon = require("pgmoon")
-
 local _M = {}
 
 function _M.check_revoked_token(conf, jti)
-  -- ❗ Defensive config check
-  if not conf.postgres_host or not conf.postgres_database then
-    return nil, "PostgreSQL configuration missing"
-  end
-
   local pg = pgmoon.new({
     host = conf.postgres_host,
-    port = conf.postgres_port or 5432,
+    port = conf.postgres_port,
     database = conf.postgres_database,
     user = conf.postgres_user,
     password = conf.postgres_password,
   })
 
   local ok, err = pg:connect()
-  if not ok then
-    return nil, "Failed to connect to PostgreSQL: " .. tostring(err)
-  end
+  if not ok then return nil, err end
 
-  local table_name = conf.postgres_table or "revoked_access_token"
-
-  -- ❗ ALWAYS escape user input
+  -- Logic: We check if the JTI exists in the "revoked" table
   local query = string.format(
     "SELECT 1 FROM %s WHERE jti = %s LIMIT 1",
-    table_name,
+    conf.postgres_table,
     pg:escape_literal(jti)
   )
 
   local res, err = pg:query(query)
   pg:keepalive()
 
-  if err then
-    return nil, "PostgreSQL query failed: " .. tostring(err)
-  end
+  if err then return nil, err end
 
-  -- true  = token is revoked
-  -- false = token not found (STILL BLOCK when Redis failed)
   if res and #res > 0 then
-    return true, nil
+    return true, nil -- It IS in the revoked list
   end
 
-  return false, nil
+  return false, nil -- Not revoked
 end
 
 return _M
