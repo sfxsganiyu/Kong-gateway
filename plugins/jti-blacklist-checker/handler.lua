@@ -94,7 +94,10 @@ function JtiBlacklistHandler:access(conf)
     if conf.db_fallback then
       local revoked = db_fallback.check_revoked_token(conf, jti)
       if revoked then
-        return kong.response.exit(401, { code = "TOKEN_REVOKED" })
+        return kong.response.exit(409, {
+          code = "TOKEN_REVOKED",
+          message = "Access token revoked"
+        })
       end
       return -- fail-open
     end
@@ -102,7 +105,10 @@ function JtiBlacklistHandler:access(conf)
 
   -- Redis acts as WHITELIST of active JTIs
   if not exists then
-    return kong.response.exit(401, { code = "SESSION_EXPIRED" })
+    return kong.response.exit(401, {
+      code = "SESSION_EXPIRED",
+      message = "Access token expired"
+    })
   end
 
   kong.log.err("[JTI] ALLOWED")
